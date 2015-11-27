@@ -15,6 +15,7 @@
 @property (nonatomic, strong) NSMutableArray *characterAnimationDelays;
 @property (strong, nonatomic) CADisplayLink *displaylink;
 @property (assign, nonatomic) CFTimeInterval beginTime;
+@property (assign, nonatomic) CFTimeInterval endTime;
 @property (assign, nonatomic, getter = isFadedOut) BOOL fadedOut;
 @property (nonatomic, copy) void (^completion)();
 
@@ -55,6 +56,8 @@
   
   [self commonInit];
   
+  [self setText:self.text];
+  
   return self;
 }
 
@@ -84,27 +87,33 @@
 
 - (void)setText:(NSString *)text
 {
-  self.attributedString = [[self initialAttributedStringFromString:text] mutableCopy];
-  self.attributedText = self.attributedString;
-  for (NSUInteger i = 0; i < text.length; i++) {
-    self.characterAnimationDelays[i] = @(arc4random_uniform(self.shineDuration / 2 * 100) / 100.0);
-    CGFloat remain = self.shineDuration - [self.characterAnimationDelays[i] floatValue];
-    self.characterAnimationDurations[i] = @(arc4random_uniform(remain * 100) / 100.0);
-  }
+  self.attributedText = [[NSAttributedString alloc] initWithString:text];
+}
+
+-(void)setAttributedText:(NSAttributedString *)attributedText
+{
+  self.attributedString = [self initialAttributedStringFromAttributedString:attributedText];
+	[super setAttributedText:self.attributedString];
+	for (NSUInteger i = 0; i < attributedText.length; i++) {
+		self.characterAnimationDelays[i] = @(arc4random_uniform(self.shineDuration / 2 * 100) / 100.0);
+		CGFloat remain = self.shineDuration - [self.characterAnimationDelays[i] floatValue];
+		self.characterAnimationDurations[i] = @(arc4random_uniform(remain * 100) / 100.0);
+	}
 }
 
 - (void)shine
 {
-  if (!self.isShining && self.isFadedOut) {    
-    self.fadedOut = NO;
-    [self startAnimation];
-  }
+  [self shineWithCompletion:NULL];
 }
 
 - (void)shineWithCompletion:(void (^)())completion
 {
-  self.completion = completion;
-  [self shine];
+  
+  if (!self.isShining && self.isFadedOut) {
+    self.completion = completion;
+    self.fadedOut = NO;
+    [self startAnimationWithDuration:self.shineDuration];
+  }
 }
 
 - (void)fadeOut
@@ -117,7 +126,7 @@
   if (!self.isShining && !self.isFadedOut) {
     self.completion = completion;
     self.fadedOut = YES;
-    [self startAnimation];
+    [self startAnimationWithDuration:self.fadeoutDuration];
   }
 }
 
@@ -134,9 +143,10 @@
 
 #pragma mark - Private methods
 
-- (void)startAnimation
+- (void)startAnimationWithDuration:(CFTimeInterval)duration
 {
   self.beginTime = CACurrentMediaTime();
+  self.endTime = self.beginTime + self.shineDuration;
   self.displaylink.paused = NO;
 }
 
@@ -144,13 +154,21 @@
 {
   CFTimeInterval now = CACurrentMediaTime();
   for (NSUInteger i = 0; i < self.attributedString.length; i ++) {
+    if ([[NSCharacterSet whitespaceAndNewlineCharacterSet] characterIsMember:[self.attributedString.string characterAtIndex:i]]) {
+        continue;
+    }
     [self.attributedString enumerateAttribute:NSForegroundColorAttributeName
                                       inRange:NSMakeRange(i, 1)
                                       options:NSAttributedStringEnumerationLongestEffectiveRangeNotRequired
                                    usingBlock:^(id value, NSRange range, BOOL *stop) {
-                                     if ((now - self.beginTime) < [self.characterAnimationDelays[i] floatValue]) {
+                                     
+                                     CGFloat currentAlpha = CGColorGetAlpha([(UIColor *)value CGColor]);
+                                     BOOL shouldUpdateAlpha = (self.isFadedOut && currentAlpha > 0) || (!self.isFadedOut && currentAlpha < 1) || (now - self.beginTime) >= [self.characterAnimationDelays[i] floatValue];
+                                     
+                                     if (!shouldUpdateAlpha) {
                                        return;
-                                     }                                     
+                                     }
+                                     
                                      CGFloat percentage = (now - self.beginTime - [self.characterAnimationDelays[i] floatValue]) / ( [self.characterAnimationDurations[i] floatValue]);
                                      if (self.isFadedOut) {
                                        percentage = 1 - percentage;
@@ -158,25 +176,22 @@
                                      UIColor *color = [self.textColor colorWithAlphaComponent:percentage];
                                      [self.attributedString addAttribute:NSForegroundColorAttributeName value:color range:range];
                                    }];
-    
-    self.attributedText = self.attributedString;
-    if (now > self.beginTime + self.shineDuration) {
-      self.displaylink.paused = YES;
-      if (self.completion) {
-        self.completion();
-        self.completion = NULL;
-      }
+  }
+  [super setAttributedText:self.attributedString];
+  if (now > self.endTime) {
+    self.displaylink.paused = YES;
+    if (self.completion) {
+      self.completion();
     }
   }
 }
 
-
-- (NSAttributedString *)initialAttributedStringFromString:(NSString *)string
+- (NSMutableAttributedString *)initialAttributedStringFromAttributedString:(NSAttributedString *)attributedString
 {
-  NSMutableAttributedString *attributedString = [[NSMutableAttributedString alloc] initWithString:string];
+  NSMutableAttributedString *mutableAttributedString = [attributedString mutableCopy];
   UIColor *color = [self.textColor colorWithAlphaComponent:0];
-  [attributedString addAttribute:NSForegroundColorAttributeName value:color range:NSMakeRange(0, string.length)];
-  return [attributedString copy];
+  [mutableAttributedString addAttribute:NSForegroundColorAttributeName value:color range:NSMakeRange(0, mutableAttributedString.length)];
+  return mutableAttributedString;
 }
 
 
